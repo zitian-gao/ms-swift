@@ -13,7 +13,7 @@ from transformers.integrations import is_deepspeed_zero3_enabled
 from transformers.utils import (is_torch_bf16_gpu_available, is_torch_cuda_available, is_torch_mps_available,
                                 is_torch_npu_available, strtobool)
 from types import MethodType
-from typing import List, Optional, TypeVar, Union
+from typing import List, Literal, Optional, TypeVar, Union
 
 from swift.utils import (HfConfigFactory, Processor, deep_getattr, get_dist_setting, get_env_args, get_logger, is_mp,
                          to_device)
@@ -85,6 +85,33 @@ def get_llm_model(model: torch.nn.Module, model_meta=None, inner_backbone=True):
         elif hasattr(llm_model, 'model'):
             llm_model = llm_model.model
     return llm_model
+
+
+def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Literal['layer-loop', 'model-loop'],
+                           loop_times: int) -> nn.Module:
+    if not enable_loop:
+        return model
+    if loop_times < 1:
+        raise ValueError(f'`loop_times` must be greater than 0, got {loop_times}.')
+    llm_model = get_llm_model(model, inner_backbone=True)
+    if not hasattr(llm_model, 'layers') or not isinstance(llm_model.layers, nn.ModuleList):
+        raise ValueError('Looped transformer currently only supports models with `model.layers` as ModuleList.')
+
+    layers = list(llm_model.layers)
+    if not layers:
+        raise ValueError('Cannot apply looped transformer on empty layers.')
+
+    if loop_method == 'layer-loop':
+        looped_layers = [layer for layer in layers for _ in range(loop_times)]
+    elif loop_method == 'model-loop':
+        looped_layers = layers * loop_times
+    else:
+        raise ValueError(f'Unsupported loop_method: {loop_method}')
+    llm_model.layers = nn.ModuleList(looped_layers)
+    logger.info(
+        f'Enabled looped transformer: loop_method={loop_method}, loop_times={loop_times}, '
+        f'origin_layers={len(layers)}, looped_layers={len(looped_layers)}')
+    return model
 
 
 def use_submodel_func(model, submodel_name: str, func_list: Optional[List[str]] = None) -> None:
