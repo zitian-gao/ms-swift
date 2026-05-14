@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 import swift
 from swift.hub import get_hub
-from swift.model import get_ckpt_dir, get_model_processor, load_by_unsloth
+from swift.model import apply_loop_transformer, get_ckpt_dir, get_model_processor, load_by_unsloth
 from swift.ray import RayArguments
 from swift.template import Template, get_template
 from swift.tuner_plugin import tuners_map
@@ -99,6 +99,9 @@ class BaseArguments(GenerationArguments, QuantizeArguments, DataArguments, Templ
     # extra
     ignore_args_error: bool = False  # True: notebook compatibility
     use_swift_lora: bool = False  # True for using tuner_backend == swift, don't specify this unless you know what you are doing # noqa
+    enable_loop: bool = False
+    loop_method: Literal['layer-loop', 'model-loop'] = 'layer-loop'
+    loop_times: int = 1
 
     def _prepare_training_args(self, training_args: Dict[str, Any]) -> None:
         pass
@@ -326,4 +329,7 @@ class BaseArguments(GenerationArguments, QuantizeArguments, DataArguments, Templ
         res['task_type'] = task_type or self.task_type
         res['num_labels'] = num_labels or self.num_labels
 
-        return get_model_processor(**res)
+        model, processor = get_model_processor(**res)
+        if model is not None:
+            model = apply_loop_transformer(model, self.enable_loop, self.loop_method, self.loop_times)
+        return model, processor
