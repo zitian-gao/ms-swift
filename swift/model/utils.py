@@ -102,16 +102,54 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
         raise ValueError('Cannot apply looped transformer on empty layers.')
 
     if loop_method == 'layer-loop':
-        looped_layers = [layer for layer in layers for _ in range(loop_times)]
+        for layer in llm_model.layers:
+            if getattr(layer, '_swift_layer_loop_patched', False):
+                continue
+            old_forward = layer.forward
+
+            @wraps(old_forward)
+            def _new_forward(self, *args, _old_forward=old_forward, **kwargs):
+                output = _old_forward(*args, **kwargs)
+                for _ in range(loop_times - 1):
+                    next_args = args
+                    if isinstance(output, tuple) and output:
+                        next_args = (output[0],) + args[1:]
+                    output = _old_forward(*next_args, **kwargs)
+                return output
+
+            layer.forward = MethodType(_new_forward, layer)
+            layer._swift_layer_loop_patched = True
+            layer._swift_layer_loop_times = loop_times
+        logger.info(
+            f'Enabled looped transformer in forward: loop_method={loop_method}, loop_times={loop_times}, '
+            f'origin_layers={len(layers)}, looped_layers={len(layers)}')
     elif loop_method == 'model-loop':
-        looped_layers = layers * loop_times
+        if not getattr(llm_model, '_swift_model_loop_patched', False):
+            old_forward = llm_model.forward
+
+            @wraps(old_forward)
+            def _new_forward(self, *args, _old_forward=old_forward, **kwargs):
+                output = _old_forward(*args, **kwargs)
+                for _ in range(loop_times - 1):
+                    forward_kwargs = dict(kwargs)
+                    hidden_states = getattr(output, 'last_hidden_state', None)
+                    if hidden_states is None and isinstance(output, tuple) and output:
+                        hidden_states = output[0]
+                    if hidden_states is None:
+                        raise RuntimeError('model-loop forward patch expects model output to contain last_hidden_state.')
+                    forward_kwargs['input_ids'] = None
+                    forward_kwargs['inputs_embeds'] = hidden_states
+                    output = _old_forward(**forward_kwargs)
+                return output
+
+            llm_model.forward = MethodType(_new_forward, llm_model)
+            llm_model._swift_model_loop_patched = True
+        llm_model._swift_model_loop_times = loop_times
+        logger.info(
+            f'Enabled looped transformer in forward: loop_method={loop_method}, loop_times={loop_times}, '
+            f'origin_layers={len(layers)}, looped_layers={len(layers)}')
     else:
         raise ValueError(f'Unsupported loop_method: {loop_method}')
-    llm_model.layers = nn.ModuleList(looped_layers)
-    _update_layer_idx(looped_layers)
-    logger.info(
-        f'Enabled looped transformer: loop_method={loop_method}, loop_times={loop_times}, '
-        f'origin_layers={len(layers)}, looped_layers={len(looped_layers)}')
     return model
 
 
