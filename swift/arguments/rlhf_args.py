@@ -264,6 +264,7 @@ class RLHFArguments(TeacherModelArguments, GRPOArguments, PPOArguments, RewardMo
     max_new_tokens: Optional[int] = None  # use max_completion_length instead
 
     def _prepare_training_args(self, training_args: Dict[str, Any]) -> None:
+        super()._prepare_training_args(training_args)
         if self.rlhf_type == 'ppo':
             training_args['world_size'] = self.global_world_size
 

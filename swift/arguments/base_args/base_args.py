@@ -104,7 +104,10 @@ class BaseArguments(GenerationArguments, QuantizeArguments, DataArguments, Templ
     loop_times: int = 1
 
     def _prepare_training_args(self, training_args: Dict[str, Any]) -> None:
-        pass
+        if self.enable_loop and 'ddp_find_unused_parameters' not in training_args:
+            training_args['ddp_find_unused_parameters'] = True
+            logger.info('enable_loop is True: automatically setting ddp_find_unused_parameters=True '
+                        'to handle MoE experts or other conditionally-used parameters.')
 
     def _init_lazy_tokenize(self):
         if self.lazy_tokenize is None:
