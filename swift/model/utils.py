@@ -153,6 +153,23 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
     return model
 
 
+def _update_layer_idx(layers: list) -> None:
+    """Update layer_idx in attention sub-modules after layer duplication.
+
+    When layers are repeated (e.g. for layer-loop), each attention module's
+    layer_idx must match its new position in the list so that DynamicCache
+    indexes the correct KV-cache slot per layer, preventing KV accumulation
+    across repeated calls to the same original layer object.
+    """
+    _IDX_ATTRS = ('layer_idx', 'layer_number', 'block_idx')
+    for new_idx, layer in enumerate(layers):
+        for child_name, child in layer.named_children():
+            for attr in _IDX_ATTRS:
+                if hasattr(child, attr):
+                    setattr(child, attr, new_idx)
+                    break
+
+
 def use_submodel_func(model, submodel_name: str, func_list: Optional[List[str]] = None) -> None:
     if func_list is None:
         func_list = ['generate', 'get_input_embeddings', 'gradient_checkpointing_enable', 'forward']
