@@ -95,6 +95,12 @@ class TrainArgumentsMixin:
         eval_limit (Optional[int]): The maximum number of samples to use from the evaluation dataset. Defaults to None.
         eval_generation_config (Optional[Union[str, dict]]): Model inference configuration for evaluation, provided as
             a JSON string or a dictionary, e.g., `{'max_tokens': 512}`. Defaults to None.
+        eval_datasets_dir (Optional[str]): Local directory where EvalScope benchmark datasets are cached. When
+            specified, EvalScope will look for datasets here instead of downloading them from ModelScope. Use this for
+            offline environments: pre-download datasets on a machine with internet access
+            (e.g. `python -c "from modelscope import MsDataset; MsDataset.load('evalscope/aime24',
+            cache_dir='/your/dir')"`) then set this to the same directory. Defaults to None (uses
+            `~/.cache/modelscope/hub/datasets`).
         extra_eval_args (Optional[Union[str, dict]]): Extra arguments for evaluation, provided as a JSON string or a
             dictionary.
 
@@ -174,6 +180,7 @@ class TrainArgumentsMixin:
     eval_dataset_args: Optional[Union[str, dict]] = None
     eval_limit: Optional[int] = None
     eval_generation_config: Optional[Union[str, dict]] = None
+    eval_datasets_dir: Optional[str] = None
     extra_eval_args: Optional[Union[str, dict]] = None
 
     # Value copied from SftArguments

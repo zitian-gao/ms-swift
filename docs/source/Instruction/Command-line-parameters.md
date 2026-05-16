@@ -522,6 +522,7 @@ Vera使用`target_modules`、`target_regex`、`modules_to_save`三个参数，�
 - eval_dataset_args: 评测数据集参数，json格式，可设置多个数据集的参数。
 - eval_limit: 评测数据集采样数。
 - eval_generation_config: 评测时模型推理配置，json格式，默认为`{'max_tokens': 512}`。
+- eval_datasets_dir: EvalScope评测数据集的本地缓存目录。用于无网络的离线环境：在有网络的机器上预下载数据集后，将该参数设置为对应目录，默认为`~/.cache/modelscope/hub/datasets`。
 - use_flash_ckpt: 是否启用[DLRover Flash Checkpoint](https://github.com/intelligent-machine-learning/dlrover)的flash checkpoint。默认为`false`，启用后，权重会先保存至共享内存，之后异步持久化；建议搭配`PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"` 一起使用，避免训练过程CUDA OOM。
 
 #### SWANLAB

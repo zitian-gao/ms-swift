@@ -144,6 +144,27 @@ Note that the launch command is `sft`, and the evaluation-related parameters inc
 - eval_dataset_args: Evaluation dataset parameters in JSON format, parameters for multiple datasets can be set
 - eval_limit: Number of samples from the evaluation dataset
 - eval_generation_config: Model inference configuration during evaluation, in JSON format, default is `{'max_tokens': 512}`
+- eval_datasets_dir: Local directory where EvalScope benchmark datasets are cached. Useful for offline environments (see below)
+
+**Offline Environment Usage**
+
+EvalScope automatically downloads benchmark datasets (e.g., `aime24`) from ModelScope on first use. If your training machine has no internet access, pre-download the datasets on a machine with internet access and specify the local path via `--eval_datasets_dir`.
+
+Steps:
+1. Pre-download the dataset on a machine with internet access (dataset IDs follow the `evalscope/<dataset_name>` pattern):
+   ```python
+   from modelscope import MsDataset
+   MsDataset.load('evalscope/aime24', cache_dir='/your/shared/datasets/dir')
+   ```
+2. Copy (or mount) `/your/shared/datasets/dir` to the training machine.
+3. Add `--eval_datasets_dir` when launching training:
+   ```shell
+   swift sft \
+     ...
+     --eval_use_evalscope \
+     --eval_dataset aime24 \
+     --eval_datasets_dir /your/shared/datasets/dir
+   ```
 
 More evaluation examples can be found in [examples](https://github.com/modelscope/ms-swift/tree/main/examples/eval).
 

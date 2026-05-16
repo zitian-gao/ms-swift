@@ -144,7 +144,27 @@ swift sft \
 - eval_dataset_args: 评测数据集参数，json格式，可设置多个数据集的参数
 - eval_limit: 评测数据集采样数
 - eval_generation_config: 评测时模型推理配置，json格式，默认为`{'max_tokens': 512}`
+- eval_datasets_dir: EvalScope评测数据集的本地缓存目录，用于无网络的离线环境（详见下方"离线环境使用"）
 
+**离线环境使用**
+
+EvalScope会在首次使用时自动从ModelScope下载评测数据集（如`aime24`），如果训练机器无法访问网络，需要提前在有网机器上下载好数据集，再通过`--eval_datasets_dir`参数指定本地路径。
+
+步骤：
+1. 在有网机器上预下载数据集（数据集ID与evalscope注册名一致，格式为`evalscope/<dataset_name>`）：
+   ```python
+   from modelscope import MsDataset
+   MsDataset.load('evalscope/aime24', cache_dir='/your/shared/datasets/dir')
+   ```
+2. 将`/your/shared/datasets/dir`目录拷贝到训练机器（或挂载到同一路径）。
+3. 训练时指定该目录：
+   ```shell
+   swift sft \
+     ...
+     --eval_use_evalscope \
+     --eval_dataset aime24 \
+     --eval_datasets_dir /your/shared/datasets/dir
+   ```
 
 更多评测的样例可以参考[examples](https://github.com/modelscope/ms-swift/tree/main/examples/eval)
 

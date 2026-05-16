@@ -1101,6 +1101,8 @@ class SwiftMixin:
             eval_batch_size=self.args.per_device_eval_batch_size,
             generation_config=self.args.eval_generation_config or {'max_tokens': 512},
         )
+        if self.args.eval_datasets_dir:
+            task_config_kwargs['dataset_dir'] = self.args.eval_datasets_dir
         task_config_kwargs.update(self.args.extra_eval_args or {})
         task_config = TaskConfig(**task_config_kwargs)
         # start evaluation
