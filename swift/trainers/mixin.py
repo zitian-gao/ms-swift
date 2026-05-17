@@ -974,6 +974,9 @@ class SwiftMixin:
                 self._evalscope_eval()
             except Exception as e:
                 logger.warning(f'Failed to call EvalScope evaluation function: {e}.')
+            finally:
+                if dist.is_initialized():
+                    dist.barrier()
 
             if not self.eval_dataset:
                 self.control.should_evaluate = False
@@ -1077,19 +1080,24 @@ class SwiftMixin:
 
     @torch.no_grad()
     def _evalscope_eval(self):
+        if not self.is_world_process_zero():
+            return {}
         from evalscope import TaskConfig, run_task
 
         from ..pipelines.eval.utils import EvalModel
 
         self.model.eval()
+        torch.cuda.empty_cache()
         template = copy(self.template)
         template.packing = False
         template.padding_free = False
+        # Use the unwrapped model (strip DDP/FSDP wrapper) for inference.
+        infer_model = unwrap_model(self.model)
         # prepare task config
         task_config_kwargs = dict(
             model=EvalModel(
                 model_name=f'model-step{self.state.global_step}',
-                model=self.model,
+                model=infer_model,
                 template=template,
                 max_batch_size=self.args.per_device_eval_batch_size,
             ),
