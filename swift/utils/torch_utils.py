@@ -286,8 +286,14 @@ def to_device(data: Any, device: Union[str, torch.device, int], non_blocking: bo
     elif isinstance(data, (tuple, list)):
         return type(data)(to_device(v, device, non_blocking) for v in data)
     elif isinstance(data, torch.Tensor):
-        return data.contiguous().to(device=device, non_blocking=non_blocking)
-        # return data.to(device=device, non_blocking=non_blocking)
+        try:
+            return data.to(device=device, non_blocking=non_blocking)
+        except (RuntimeError, torch.AcceleratorError) as e:
+            if 'misaligned address' not in str(e):
+                raise
+            # Some kernels may fail on non-contiguous tensors with async H2D copies.
+            # Fallback to a contiguous + blocking copy for better compatibility.
+            return data.contiguous().to(device=device, non_blocking=False)
     else:
         return data
 
