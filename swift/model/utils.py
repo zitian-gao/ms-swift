@@ -87,6 +87,7 @@ def get_llm_model(model: torch.nn.Module, model_meta=None, inner_backbone=True):
     return llm_model
 
 
+
 def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Literal['layer-loop', 'model-loop'],
                            loop_times: int) -> nn.Module:
     if not enable_loop:
@@ -101,17 +102,40 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
     if not layers:
         raise ValueError('Cannot apply looped transformer on empty layers.')
 
+    print(
+        f'[LOOP-DBG] apply_loop_transformer called: method={loop_method} times={loop_times} '
+        f'llm_model={type(llm_model).__name__} n_layers={len(layers)}',
+        flush=True)
+
     if loop_method == 'layer-loop':
-        for layer in llm_model.layers:
+        for layer_idx, layer in enumerate(llm_model.layers):
             if getattr(layer, '_swift_layer_loop_patched', False):
                 continue
             old_forward = layer.forward
 
             @wraps(old_forward)
-            def _new_forward(self, *args, _old_forward=old_forward, **kwargs):
+            def _new_forward(self, *args, _old_forward=old_forward, _layer_idx=layer_idx, **kwargs):
+                # --- debug: first call ---
+                pkv = kwargs.get('past_key_value') or kwargs.get('past_key_values')
+                uc = kwargs.get('use_cache', '<absent>')
+                hs_arg = args[0] if args else kwargs.get('hidden_states')
+                hs_shape = tuple(hs_arg.shape) if hasattr(hs_arg, 'shape') else None
+                if pkv is None:
+                    cache_desc = 'None'
+                elif hasattr(pkv, 'key_cache'):
+                    lens = [t.shape[-2] if t is not None else 0 for t in pkv.key_cache]
+                    cache_desc = f'{type(pkv).__name__}(key_lens_per_layer={lens[:4]}...len={len(lens)})'
+                else:
+                    cache_desc = type(pkv).__name__
+                print(
+                    f'[LOOP-DBG] layer-loop layer={_layer_idx} CALL-0 '
+                    f'hs_shape={hs_shape} use_cache={uc} past_kv={cache_desc}',
+                    flush=True)
+
                 # First call runs normally and may update the KV cache once.
                 output = _old_forward(*args, **kwargs)
-                for _ in range(loop_times - 1):
+
+                for loop_i in range(loop_times - 1):
                     # Strip KV-cache kwargs for loop iterations.
                     # In modern transformers, DynamicCache.update() is called whenever
                     # past_key_value is not None, regardless of use_cache.  Passing the
@@ -125,12 +149,22 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
                     next_args = args
                     if isinstance(output, tuple) and output:
                         next_args = (output[0],) + args[1:]
+
+                    # --- debug: loop iteration ---
+                    hs_loop = next_args[0] if next_args else loop_kwargs.get('hidden_states')
+                    print(
+                        f'[LOOP-DBG] layer-loop layer={_layer_idx} CALL-{loop_i+1} '
+                        f'hs_shape={tuple(hs_loop.shape) if hasattr(hs_loop,"shape") else None} '
+                        f'use_cache={loop_kwargs.get("use_cache")} past_kv=None(stripped)',
+                        flush=True)
+
                     output = _old_forward(*next_args, **loop_kwargs)
                 return output
 
             layer.forward = MethodType(_new_forward, layer)
             layer._swift_layer_loop_patched = True
             layer._swift_layer_loop_times = loop_times
+            print(f'[LOOP-DBG] patched layer {layer_idx} ({type(layer).__name__})', flush=True)
         logger.info(
             f'Enabled looped transformer in forward: loop_method={loop_method}, loop_times={loop_times}, '
             f'origin_layers={len(layers)}, looped_layers={len(layers)}')
@@ -140,9 +174,26 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
 
             @wraps(old_forward)
             def _new_forward(self, *args, _old_forward=old_forward, **kwargs):
+                input_ids = kwargs.get('input_ids')
+                pkv = kwargs.get('past_key_values')
+                uc = kwargs.get('use_cache', '<absent>')
+                if pkv is None:
+                    cache_desc = 'None'
+                elif hasattr(pkv, 'key_cache'):
+                    lens = [t.shape[-2] if t is not None else 0 for t in pkv.key_cache]
+                    cache_desc = f'{type(pkv).__name__}(key_lens_per_layer={lens[:4]}...len={len(lens)})'
+                else:
+                    cache_desc = type(pkv).__name__
+                ids_shape = tuple(input_ids.shape) if hasattr(input_ids, 'shape') else None
+                print(
+                    f'[LOOP-DBG] model-loop CALL-0 input_ids={ids_shape} '
+                    f'use_cache={uc} past_kv={cache_desc}',
+                    flush=True)
+
                 # First call runs normally and may update the KV cache once.
                 output = _old_forward(*args, **kwargs)
-                for _ in range(loop_times - 1):
+
+                for loop_i in range(loop_times - 1):
                     forward_kwargs = dict(kwargs)
                     hidden_states = getattr(output, 'last_hidden_state', None)
                     if hidden_states is None and isinstance(output, tuple) and output:
@@ -154,11 +205,19 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
                     # Strip KV-cache kwargs for loop iterations (same reason as layer-loop above).
                     forward_kwargs.pop('past_key_values', None)
                     forward_kwargs['use_cache'] = False
+
+                    pkv2 = forward_kwargs.get('past_key_values')
+                    print(
+                        f'[LOOP-DBG] model-loop CALL-{loop_i+1} embeds_shape={tuple(hidden_states.shape)} '
+                        f'use_cache={forward_kwargs["use_cache"]} past_kv={pkv2}',
+                        flush=True)
+
                     output = _old_forward(**forward_kwargs)
                 return output
 
             llm_model.forward = MethodType(_new_forward, llm_model)
             llm_model._swift_model_loop_patched = True
+            print(f'[LOOP-DBG] patched model backbone ({type(llm_model).__name__})', flush=True)
         llm_model._swift_model_loop_times = loop_times
         logger.info(
             f'Enabled looped transformer in forward: loop_method={loop_method}, loop_times={loop_times}, '
