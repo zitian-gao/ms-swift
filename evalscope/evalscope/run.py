@@ -141,7 +141,7 @@ def evaluate_model(task_config: TaskConfig, outputs: OutputsStructure) -> dict:
 
     # dump task_cfg to outputs.configs_dir after creating evaluators
     task_config.dump_yaml(outputs.configs_dir)
-    logger.debug(task_config)
+    logger.info(task_config)
 
     tracker_ctx = make_tracker(
         task_config.enable_progress_tracker,
