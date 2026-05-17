@@ -899,7 +899,7 @@ def patch_qwen3_moe_for_layer_loop():
                 # This turns the stale [B, 1, 1, 188] mask into [B, 1, 1, 1] for a
                 # 1-token loop iteration without KV cache.
                 kwargs = dict(kwargs)
-                kwargs['attention_mask'] = attention_mask[:, :, :seq_len, :seq_len]
+                kwargs['attention_mask'] = attention_mask[:, :, :seq_len, :seq_len].contiguous()
         return origin_forward(self, hidden_states, *args, **kwargs)
 
     Qwen3MoeDecoderLayer.forward = forward

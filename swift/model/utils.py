@@ -134,7 +134,10 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
                         loop_kwargs.pop('attention_mask', None)
                     next_args = args
                     if isinstance(output, tuple) and output:
-                        next_args = (output[0],) + args[1:]
+                        hs = output[0]
+                        if isinstance(hs, torch.Tensor):
+                            hs = hs.contiguous()
+                        next_args = (hs,) + args[1:]
                     output = _old_forward(*next_args, **loop_kwargs)
                 return output
 
@@ -159,6 +162,8 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
                         hidden_states = output[0]
                     if hidden_states is None:
                         raise RuntimeError('model-loop forward patch expects model output to contain last_hidden_state.')
+                    if isinstance(hidden_states, torch.Tensor):
+                        hidden_states = hidden_states.contiguous()
                     forward_kwargs['input_ids'] = None
                     forward_kwargs['inputs_embeds'] = hidden_states
                     # Strip KV-cache kwargs for loop iterations (same reason as layer-loop above).
