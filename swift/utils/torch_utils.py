@@ -291,9 +291,16 @@ def to_device(data: Any, device: Union[str, torch.device, int], non_blocking: bo
         except (RuntimeError, torch.AcceleratorError) as e:
             if 'misaligned address' not in str(e):
                 raise
-            # Some kernels may fail on non-contiguous tensors with async H2D copies.
-            # Fallback to a contiguous + blocking copy for better compatibility.
-            return data.contiguous().to(device=device, non_blocking=False)
+            # Some kernels may fail on non-contiguous tensors with async copies.
+            # Retry with stricter copy modes before giving up.
+            logger.warning(f'Caught CUDA misaligned address in to_device, shape={tuple(data.shape)}, dtype={data.dtype}')
+            try:
+                return data.contiguous().to(device=device, non_blocking=False)
+            except (RuntimeError, torch.AcceleratorError) as e2:
+                if 'misaligned address' not in str(e2):
+                    raise
+                # Last fallback: force a new host allocation, then do blocking H2D copy.
+                return data.detach().cpu().clone().contiguous().to(device=device, non_blocking=False)
     else:
         return data
 
