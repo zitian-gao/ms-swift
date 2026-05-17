@@ -890,17 +890,37 @@ def patch_qwen3_moe_for_layer_loop():
     origin_forward = Qwen3MoeDecoderLayer.forward
 
     def forward(self, hidden_states, *args, **kwargs):
+        import os
+        debug = os.environ.get('SWIFT_LOOP_DEBUG', '0') == '1'
+
         attention_mask = kwargs.get('attention_mask', None)
         past_key_value = kwargs.get('past_key_value', None)
+        mask_sliced = False
         if (attention_mask is not None and past_key_value is None and attention_mask.dim() == 4):
             seq_len = hidden_states.shape[1]
             if attention_mask.shape[-1] > seq_len:
-                # Slice key dim (and query dim) to the actual sequence length.
-                # This turns the stale [B, 1, 1, 188] mask into [B, 1, 1, 1] for a
-                # 1-token loop iteration without KV cache.
                 kwargs = dict(kwargs)
                 kwargs['attention_mask'] = attention_mask[:, :, :seq_len, :seq_len].contiguous()
-        return origin_forward(self, hidden_states, *args, **kwargs)
+                mask_sliced = True
+
+        if debug:
+            am = kwargs.get('attention_mask')
+            print(f'[QWEN_DEBUG] hs shape={list(hidden_states.shape)} '
+                  f'dtype={hidden_states.dtype} contiguous={hidden_states.is_contiguous()} '
+                  f'has_pkv={past_key_value is not None} '
+                  f'mask_sliced={mask_sliced} '
+                  f'am={list(am.shape) if am is not None else None}', flush=True)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                print(f'[QWEN_DEBUG] pre-forward CUDA sync OK', flush=True)
+
+        result = origin_forward(self, hidden_states, *args, **kwargs)
+
+        if debug and torch.cuda.is_available():
+            torch.cuda.synchronize()
+            print(f'[QWEN_DEBUG] post-forward CUDA sync OK', flush=True)
+
+        return result
 
     Qwen3MoeDecoderLayer.forward = forward
 

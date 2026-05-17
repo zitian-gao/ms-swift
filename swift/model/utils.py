@@ -109,15 +109,36 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
 
             @wraps(old_forward)
             def _new_forward(self, *args, _old_forward=old_forward, **kwargs):
-                # First call runs normally and may update the KV cache once.
+                import os
+                debug = os.environ.get('SWIFT_LOOP_DEBUG', '0') == '1'
+
+                def _tensor_info(t):
+                    if not isinstance(t, torch.Tensor):
+                        return str(type(t))
+                    return (f'shape={list(t.shape)} dtype={t.dtype} '
+                            f'device={t.device} contiguous={t.is_contiguous()} '
+                            f'stride={list(t.stride())}')
+
+                if debug:
+                    hs_in = args[0] if args else kwargs.get('hidden_states')
+                    am_in = kwargs.get('attention_mask')
+                    pkv_in = kwargs.get('past_key_value') or kwargs.get('past_key_values')
+                    print(f'[LOOP_DEBUG] call=0 layer={getattr(self, "layer_idx", "?")} '
+                          f'hs={_tensor_info(hs_in)} '
+                          f'attn_mask={_tensor_info(am_in) if am_in is not None else None} '
+                          f'has_pkv={pkv_in is not None}', flush=True)
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+
                 output = _old_forward(*args, **kwargs)
+
+                if debug and torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                    out0 = output[0] if isinstance(output, tuple) and output else None
+                    print(f'[LOOP_DEBUG] call=0 done layer={getattr(self, "layer_idx", "?")} '
+                          f'out0={_tensor_info(out0)}', flush=True)
+
                 for _ in range(loop_times - 1):
-                    # Strip KV-cache kwargs for loop iterations.
-                    # In modern transformers, DynamicCache.update() is called whenever
-                    # past_key_value is not None, regardless of use_cache.  Passing the
-                    # same cache object a second time doubles the KV sequence length,
-                    # causing an attention-mask size mismatch (e.g. [8,1,187,187] vs
-                    # target [8,48,187,374] when loop_times=2).
                     loop_kwargs = dict(kwargs)
                     had_past_kv = (loop_kwargs.get('past_key_value') is not None
                                    or loop_kwargs.get('past_key_values') is not None)
@@ -125,12 +146,6 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
                     loop_kwargs.pop('past_key_values', None)
                     loop_kwargs['use_cache'] = False
                     if had_past_kv:
-                        # The pre-computed attention_mask covers the full KV context
-                        # (e.g. [B, 1, 1, 188]).  After stripping the cache the layer
-                        # sees only the 1-token input, so the mask is stale and would
-                        # cause a shape mismatch in attention (Target [B, heads, 1, 1]
-                        # vs Tensor [B, 1, 1, 188]).  Remove it; a single token
-                        # attending only to itself needs no causal mask.
                         loop_kwargs.pop('attention_mask', None)
                     next_args = args
                     if isinstance(output, tuple) and output:
@@ -138,7 +153,25 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
                         if isinstance(hs, torch.Tensor):
                             hs = hs.contiguous()
                         next_args = (hs,) + args[1:]
+
+                    if debug:
+                        hs_loop = next_args[0] if next_args else None
+                        am_loop = loop_kwargs.get('attention_mask')
+                        print(f'[LOOP_DEBUG] call=loop layer={getattr(self, "layer_idx", "?")} '
+                              f'hs={_tensor_info(hs_loop)} '
+                              f'attn_mask={_tensor_info(am_loop) if am_loop is not None else None} '
+                              f'had_pkv={had_past_kv}', flush=True)
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
+
                     output = _old_forward(*next_args, **loop_kwargs)
+
+                    if debug and torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                        out0 = output[0] if isinstance(output, tuple) and output else None
+                        print(f'[LOOP_DEBUG] call=loop done layer={getattr(self, "layer_idx", "?")} '
+                              f'out0={_tensor_info(out0)}', flush=True)
+
                 return output
 
             layer.forward = MethodType(_new_forward, layer)

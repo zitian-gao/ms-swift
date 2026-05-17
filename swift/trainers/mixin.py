@@ -1088,11 +1088,18 @@ class SwiftMixin:
 
         self.model.eval()
         torch.cuda.empty_cache()
+        logger.warning(f'[EVAL_DEBUG] rank=0 starting evalscope eval at step={self.state.global_step}')
+        logger.warning(f'[EVAL_DEBUG] GPU mem before eval: '
+                       f'allocated={torch.cuda.memory_allocated()/1e9:.2f}GB '
+                       f'reserved={torch.cuda.memory_reserved()/1e9:.2f}GB')
+        torch.cuda.synchronize()
+        logger.warning('[EVAL_DEBUG] CUDA sync before eval: OK')
         template = copy(self.template)
         template.packing = False
         template.padding_free = False
         # Use the unwrapped model (strip DDP/FSDP wrapper) for inference.
         infer_model = unwrap_model(self.model)
+        logger.warning(f'[EVAL_DEBUG] model type after unwrap: {type(infer_model).__name__}')
         # prepare task config
         task_config_kwargs = dict(
             model=EvalModel(
