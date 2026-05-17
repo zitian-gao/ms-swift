@@ -84,7 +84,7 @@ def run_non_native_backend(task_cfg: TaskConfig, outputs: OutputsStructure) -> d
     backend_manager = backend_manager_class(config=eval_config)
 
     task_cfg.dump_yaml(outputs.configs_dir)
-    logger.info(task_cfg)
+    logger.debug(task_cfg)
 
     backend_manager.run()
 
@@ -141,7 +141,7 @@ def evaluate_model(task_config: TaskConfig, outputs: OutputsStructure) -> dict:
 
     # dump task_cfg to outputs.configs_dir after creating evaluators
     task_config.dump_yaml(outputs.configs_dir)
-    logger.info(task_config)
+    logger.debug(task_config)
 
     tracker_ctx = make_tracker(
         task_config.enable_progress_tracker,
