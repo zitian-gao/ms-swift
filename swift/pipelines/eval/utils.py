@@ -45,12 +45,6 @@ class _QueueItem:
     future: Future[ModelOutput]  # will be resolved with the inference result
 
 
-# Global variables for batch processing
-# These maintain the shared batch processing infrastructure across all model instances
-batch_thread: Optional[Thread] = None  # background thread for processing batches
-batch_queue: Queue[_QueueItem] = Queue()  # queue of pending inference requests
-
-
 @register_model_api('swift_custom')
 class EvalModel(ModelAPI):
     """
@@ -100,6 +94,8 @@ class EvalModel(ModelAPI):
 
         # Initialize the inference engine with batch support
         self.engine = TransformersEngine(self.model, template=self.template, max_batch_size=self.max_batch_size)
+        self._batch_thread: Optional[Thread] = None
+        self._batch_queue: Queue[_QueueItem] = Queue()
 
     def generate(
         self,
@@ -124,10 +120,9 @@ class EvalModel(ModelAPI):
             ModelOutput containing the generated response
         """
         # Ensure the background batch processing thread is running
-        global batch_thread
-        if batch_thread is None:
-            batch_thread = Thread(target=_process_batches, daemon=True)
-            batch_thread.start()
+        if self._batch_thread is None:
+            self._batch_thread = Thread(target=self._process_batches, daemon=True)
+            self._batch_thread.start()
 
         # Convert EvalScope format to ms-swift format
         ms_input = convert_request(input, tools)
@@ -141,74 +136,74 @@ class EvalModel(ModelAPI):
         future = Future[ModelOutput]()
 
         # Queue the request for batch processing
-        batch_queue.put(_QueueItem(input=batch_input, future=future))
+        self._batch_queue.put(_QueueItem(input=batch_input, future=future))
 
         # Block until the result is available
         return future.result()
 
 
-def _process_batches() -> None:
-    """
-    Background thread function that processes batched inference requests.
+    def _process_batches(self) -> None:
+        """
+        Background thread function that processes batched inference requests.
 
-    This function runs continuously, collecting requests from the queue and
-    processing them in batches for improved efficiency. It uses a timeout-based
-    approach to balance between batch size and latency.
-    """
-    while True:
-        # Collect requests from the queue until timeout or batch size limit
-        inputs: List[Tuple[BatchInferInput, Future[ModelOutput]]] = []
-
+        This function runs continuously, collecting requests from the queue and
+        processing them in batches for improved efficiency. It uses a timeout-based
+        approach to balance between batch size and latency.
+        """
         while True:
+            # Collect requests from the queue until timeout or batch size limit
+            inputs: List[Tuple[BatchInferInput, Future[ModelOutput]]] = []
+
+            while True:
+                try:
+                    # Wait for new requests with a 2-second timeout
+                    item = self._batch_queue.get(timeout=2)
+                    inputs.append((item.input, item.future))
+
+                    # Check if we've reached the desired batch size
+                    if len(inputs) == item.input.batch_size:
+                        break  # Process this batch now
+
+                except Empty:
+                    # No more requests in queue, process what we have
+                    break
+
+            # Skip processing if no requests were collected
+            if len(inputs) == 0:
+                continue
+
             try:
-                # Wait for new requests with a 2-second timeout
-                item = batch_queue.get(timeout=2)
-                inputs.append((item.input, item.future))
+                # Prepare batch inputs for ms-swift inference
+                ms_inputs = [item[0].ms_input for item in inputs]
+                ms_config = inputs[0][0].ms_config  # use first config for the batch
+                engine = self.engine
 
-                # Check if we've reached the desired batch size
-                if len(inputs) == item.input.batch_size:
-                    break  # Process this batch now
+                # Perform batch inference using ms-swift engine
+                completions = engine.infer(ms_inputs, ms_config, use_tqdm=False)
 
-            except Empty:
-                # No more requests in queue, process what we have
-                break
+                # Process results and deliver them to waiting futures
+                for i, (batch_input, future) in enumerate(inputs):
+                    completion = completions[i]
 
-        # Skip processing if no requests were collected
-        if len(inputs) == 0:
-            continue
+                    # Convert ms-swift response to EvalScope format
+                    choices = chat_choices_from_openai(completion, tools=[])
+                    result = ModelOutput(
+                        model=completion.model,
+                        choices=choices,
+                        usage=(ModelUsage(
+                            input_tokens=completion.usage.prompt_tokens,
+                            output_tokens=completion.usage.completion_tokens,
+                            total_tokens=completion.usage.total_tokens,
+                        ) if completion.usage else None),
+                    )
 
-        try:
-            # Prepare batch inputs for ms-swift inference
-            ms_inputs = [item[0].ms_input for item in inputs]
-            ms_config = inputs[0][0].ms_config  # use first config for the batch
-            engine = inputs[0][0].engine  # use first engine for the batch
+                    # Deliver the result to the waiting caller
+                    future.set_result(result)
 
-            # Perform batch inference using ms-swift engine
-            completions = engine.infer(ms_inputs, ms_config, use_tqdm=False)
-
-            # Process results and deliver them to waiting futures
-            for i, (batch_input, future) in enumerate(inputs):
-                completion = completions[i]
-
-                # Convert ms-swift response to EvalScope format
-                choices = chat_choices_from_openai(completion, tools=[])
-                result = ModelOutput(
-                    model=completion.model,
-                    choices=choices,
-                    usage=(ModelUsage(
-                        input_tokens=completion.usage.prompt_tokens,
-                        output_tokens=completion.usage.completion_tokens,
-                        total_tokens=completion.usage.total_tokens,
-                    ) if completion.usage else None),
-                )
-
-                # Deliver the result to the waiting caller
-                future.set_result(result)
-
-        except Exception as ex:
-            # If batch processing fails, propagate the error to all waiting futures
-            for _, future in inputs:
-                future.set_exception(ex)
+            except Exception as ex:
+                # If batch processing fails, propagate the error to all waiting futures
+                for _, future in inputs:
+                    future.set_exception(ex)
 
 
 def convert_config(config: GenerateConfig) -> RequestConfig:
