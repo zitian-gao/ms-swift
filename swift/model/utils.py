@@ -109,12 +109,18 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
 
             @wraps(old_forward)
             def _new_forward(self, *args, _old_forward=old_forward, **kwargs):
-                output = _old_forward(*args, **kwargs)
+                forward_kwargs = dict(kwargs)
+                if loop_times > 1 and forward_kwargs.get('use_cache'):
+                    # Re-entering the same layer with KV-cache enabled will append keys/values
+                    # again, making key_length grow while attention_mask keeps original width.
+                    # This causes shape mismatch during eval (e.g. with evalscope loops).
+                    forward_kwargs['use_cache'] = False
+                output = _old_forward(*args, **forward_kwargs)
                 for _ in range(loop_times - 1):
                     next_args = args
                     if isinstance(output, tuple) and output:
                         next_args = (output[0],) + args[1:]
-                    output = _old_forward(*next_args, **kwargs)
+                    output = _old_forward(*next_args, **forward_kwargs)
                 return output
 
             layer.forward = MethodType(_new_forward, layer)
@@ -129,9 +135,14 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
 
             @wraps(old_forward)
             def _new_forward(self, *args, _old_forward=old_forward, **kwargs):
-                output = _old_forward(*args, **kwargs)
+                forward_kwargs = dict(kwargs)
+                if loop_times > 1 and forward_kwargs.get('use_cache'):
+                    # Re-entering the same transformer block stack with KV-cache enabled
+                    # can double key/value sequence length in the second loop pass.
+                    forward_kwargs['use_cache'] = False
+                output = _old_forward(*args, **forward_kwargs)
                 for _ in range(loop_times - 1):
-                    forward_kwargs = dict(kwargs)
+                    forward_kwargs = dict(forward_kwargs)
                     hidden_states = getattr(output, 'last_hidden_state', None)
                     if hidden_states is None and isinstance(output, tuple) and output:
                         hidden_states = output[0]
