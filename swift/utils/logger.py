@@ -123,6 +123,21 @@ else:
     ms_logger.setLevel(logging.ERROR)
 
 
+def set_log_level(log_level: str) -> None:
+    """Dynamically update the log level for swift and modelscope loggers."""
+    level = getattr(logging, log_level.upper(), logging.INFO)
+    if not _is_local_master():
+        return
+    swift_logger = logging.getLogger(__name__.split('.')[0])
+    swift_logger.setLevel(level)
+    for handler in swift_logger.handlers:
+        handler.setLevel(level)
+    ms_logger = get_ms_logger()
+    ms_logger.setLevel(level)
+    for handler in ms_logger.handlers:
+        handler.setLevel(level)
+
+
 @contextmanager
 def logger_context(logger, log_leval):
     origin_log_level = logger.level

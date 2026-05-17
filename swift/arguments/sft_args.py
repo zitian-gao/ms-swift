@@ -6,7 +6,7 @@ from typing import Literal, Optional
 
 from swift.trainers import Seq2SeqTrainingArguments, TrainerFactory
 from swift.utils import (add_version_to_work_dir, get_device_count, get_logger, get_pai_tensorboard_dir, is_mp,
-                         is_pai_training_job, is_swanlab_available, json_parse_to_dict, to_abspath)
+                         is_pai_training_job, is_swanlab_available, json_parse_to_dict, set_log_level, to_abspath)
 from .base_args import BaseArguments
 from .tuner_args import TunerArguments
 
@@ -156,6 +156,8 @@ class SftArguments(SwanlabArguments, TunerArguments, BaseArguments, Seq2SeqTrain
         deepspeed_autotp_size (Optional[int]): The tensor parallelism size for DeepSpeed AutoTP. To use this, the
             `--deepspeed` argument must be set to 'zero0', 'zero1', or 'zero2'. Note: This feature only supports
             full-parameter fine-tuning. Defaults to None.
+        log_level (Literal['critical', 'error', 'warning', 'info', 'debug']): The log level for training output.
+            Defaults to 'info'. Set to 'warning' or 'error' to suppress verbose output.
     """
     add_version: bool = True
     create_checkpoint_symlink: bool = False
@@ -181,6 +183,8 @@ class SftArguments(SwanlabArguments, TunerArguments, BaseArguments, Seq2SeqTrain
     # fsdp
     fsdp: Optional[str] = None
 
+    log_level: Literal['critical', 'error', 'warning', 'info', 'debug'] = 'info'
+
     def _check_padding_free(self):
         if self.padding_free or self.packing:
             if self.packing:
@@ -195,6 +199,7 @@ class SftArguments(SwanlabArguments, TunerArguments, BaseArguments, Seq2SeqTrain
                                  f'Please use one of: {supported_impls_str}.')
 
     def __post_init__(self) -> None:
+        set_log_level(self.log_level)
         if self.resume_from_checkpoint:
             self.resume_from_checkpoint = to_abspath(self.resume_from_checkpoint, True)
             # The non-resume_only_model will have its weights loaded in the trainer.
