@@ -109,18 +109,23 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
 
             @wraps(old_forward)
             def _new_forward(self, *args, _old_forward=old_forward, **kwargs):
-                forward_kwargs = dict(kwargs)
-                if loop_times > 1 and forward_kwargs.get('use_cache'):
-                    # Re-entering the same layer with KV-cache enabled will append keys/values
-                    # again, making key_length grow while attention_mask keeps original width.
-                    # This causes shape mismatch during eval (e.g. with evalscope loops).
-                    forward_kwargs['use_cache'] = False
-                output = _old_forward(*args, **forward_kwargs)
+                # First call runs normally and may update the KV cache once.
+                output = _old_forward(*args, **kwargs)
                 for _ in range(loop_times - 1):
+                    # Strip KV-cache kwargs for loop iterations.
+                    # In modern transformers, DynamicCache.update() is called whenever
+                    # past_key_value is not None, regardless of use_cache.  Passing the
+                    # same cache object a second time doubles the KV sequence length,
+                    # causing an attention-mask size mismatch (e.g. [8,1,187,187] vs
+                    # target [8,48,187,374] when loop_times=2).
+                    loop_kwargs = dict(kwargs)
+                    loop_kwargs.pop('past_key_value', None)
+                    loop_kwargs.pop('past_key_values', None)
+                    loop_kwargs['use_cache'] = False
                     next_args = args
                     if isinstance(output, tuple) and output:
                         next_args = (output[0],) + args[1:]
-                    output = _old_forward(*next_args, **forward_kwargs)
+                    output = _old_forward(*next_args, **loop_kwargs)
                 return output
 
             layer.forward = MethodType(_new_forward, layer)
@@ -135,14 +140,10 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
 
             @wraps(old_forward)
             def _new_forward(self, *args, _old_forward=old_forward, **kwargs):
-                forward_kwargs = dict(kwargs)
-                if loop_times > 1 and forward_kwargs.get('use_cache'):
-                    # Re-entering the same transformer block stack with KV-cache enabled
-                    # can double key/value sequence length in the second loop pass.
-                    forward_kwargs['use_cache'] = False
-                output = _old_forward(*args, **forward_kwargs)
+                # First call runs normally and may update the KV cache once.
+                output = _old_forward(*args, **kwargs)
                 for _ in range(loop_times - 1):
-                    forward_kwargs = dict(forward_kwargs)
+                    forward_kwargs = dict(kwargs)
                     hidden_states = getattr(output, 'last_hidden_state', None)
                     if hidden_states is None and isinstance(output, tuple) and output:
                         hidden_states = output[0]
@@ -150,6 +151,9 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
                         raise RuntimeError('model-loop forward patch expects model output to contain last_hidden_state.')
                     forward_kwargs['input_ids'] = None
                     forward_kwargs['inputs_embeds'] = hidden_states
+                    # Strip KV-cache kwargs for loop iterations (same reason as layer-loop above).
+                    forward_kwargs.pop('past_key_values', None)
+                    forward_kwargs['use_cache'] = False
                     output = _old_forward(**forward_kwargs)
                 return output
 
