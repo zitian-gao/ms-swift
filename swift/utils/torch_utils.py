@@ -286,7 +286,8 @@ def to_device(data: Any, device: Union[str, torch.device, int], non_blocking: bo
     elif isinstance(data, (tuple, list)):
         return type(data)(to_device(v, device, non_blocking) for v in data)
     elif isinstance(data, torch.Tensor):
-        return data.to(device=device, non_blocking=non_blocking)
+        return data.contiguous().to(device=device, non_blocking=non_blocking)
+        # return data.to(device=device, non_blocking=non_blocking)
     else:
         return data
 
