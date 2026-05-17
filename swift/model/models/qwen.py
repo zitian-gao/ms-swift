@@ -867,6 +867,47 @@ register_model(
         tags=['vision', 'video']))
 
 
+def patch_qwen3_moe_for_layer_loop():
+    """Adapt Qwen3MoeDecoderLayer to work correctly with the layer-loop feature.
+
+    During layer-loop inference, past_key_value is stripped from loop iterations so
+    only the 1-token input attends to itself.  The pre-computed 4-D attention_mask
+    still covers the full KV context (e.g. [B, 1, 1, 188]), causing a shape mismatch
+    in attention: Target [B, heads, 1, 1] vs Tensor [B, 1, 1, 188].
+
+    Fix: when there is no past_key_value and the mask's key dimension exceeds the
+    query sequence length, slice the mask to [B, 1, q_len, q_len] so it is consistent
+    with the actual (cache-free) attention computation.
+    """
+    try:
+        from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeDecoderLayer
+    except ImportError:
+        return
+    if getattr(Qwen3MoeDecoderLayer, '_swift_layer_loop_mask_patched', False):
+        return
+    Qwen3MoeDecoderLayer._swift_layer_loop_mask_patched = True
+
+    origin_forward = Qwen3MoeDecoderLayer.forward
+
+    def forward(self, hidden_states, *args, **kwargs):
+        attention_mask = kwargs.get('attention_mask', None)
+        past_key_value = kwargs.get('past_key_value', None)
+        if (attention_mask is not None and past_key_value is None and attention_mask.dim() == 4):
+            seq_len = hidden_states.shape[1]
+            if attention_mask.shape[-1] > seq_len:
+                # Slice key dim (and query dim) to the actual sequence length.
+                # This turns the stale [B, 1, 1, 188] mask into [B, 1, 1, 1] for a
+                # 1-token loop iteration without KV cache.
+                kwargs = dict(kwargs)
+                kwargs['attention_mask'] = attention_mask[:, :, :seq_len, :seq_len]
+        return origin_forward(self, hidden_states, *args, **kwargs)
+
+    Qwen3MoeDecoderLayer.forward = forward
+
+
+patch_qwen3_moe_for_layer_loop()
+
+
 def patch_Qwen3VLMoeTextExperts_dtype():
     from transformers.models.qwen3_vl_moe.modeling_qwen3_vl_moe import Qwen3VLMoeTextExperts
     if hasattr(Qwen3VLMoeTextExperts, '_patch'):

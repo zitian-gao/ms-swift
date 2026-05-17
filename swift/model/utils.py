@@ -119,9 +119,19 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
                     # causing an attention-mask size mismatch (e.g. [8,1,187,187] vs
                     # target [8,48,187,374] when loop_times=2).
                     loop_kwargs = dict(kwargs)
+                    had_past_kv = (loop_kwargs.get('past_key_value') is not None
+                                   or loop_kwargs.get('past_key_values') is not None)
                     loop_kwargs.pop('past_key_value', None)
                     loop_kwargs.pop('past_key_values', None)
                     loop_kwargs['use_cache'] = False
+                    if had_past_kv:
+                        # The pre-computed attention_mask covers the full KV context
+                        # (e.g. [B, 1, 1, 188]).  After stripping the cache the layer
+                        # sees only the 1-token input, so the mask is stale and would
+                        # cause a shape mismatch in attention (Target [B, heads, 1, 1]
+                        # vs Tensor [B, 1, 1, 188]).  Remove it; a single token
+                        # attending only to itself needs no causal mask.
+                        loop_kwargs.pop('attention_mask', None)
                     next_args = args
                     if isinstance(output, tuple) and output:
                         next_args = (output[0],) + args[1:]
