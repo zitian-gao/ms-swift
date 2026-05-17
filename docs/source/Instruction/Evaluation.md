@@ -191,6 +191,7 @@ swift eval \
     --eval_backend Native \
     --infer_backend transformers \
     --eval_dataset general_mcq \
+    --eval_dataset_args '{"aime24": {"local_path": "/volume/pt-train/users/ztgao/cache/modelscope/evalscope___aime24/default-c60873be8fff4661"}}'
     --eval_dataset_args '{"general_mcq": {"local_path": "/path/to/mcq", "subset_list": ["example"]}}'
 ```
 其中：

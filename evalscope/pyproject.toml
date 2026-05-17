@@ -1,0 +1,91 @@
+[project]
+name = "evalscope"
+dynamic = ["version", "dependencies", "optional-dependencies"]
+description = "EvalScope: Lightweight LLMs Evaluation Framework"
+readme = {file = "README.md", content-type = "text/markdown"}
+license = "Apache-2.0"
+authors = [
+  {name = "ModelScope team"},
+  {email = "contact@modelscope.cn"}
+]
+keywords = ["python", "llm", "evaluation"]
+requires-python = ">=3.10"
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/modelscope/evalscope"
+
+[project.scripts]
+evalscope = "evalscope.cli.cli:run_cmd"
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"evalscope.web" = ["dist/**/*"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["evalscope*"]
+exclude = ["evalscope.web.node_modules*", "evalscope.web.src*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "evalscope.version.__version__"}
+dependencies = {file = ["requirements/framework.txt"]}
+
+[tool.setuptools.dynamic.optional-dependencies]
+opencompass      = {file = ["requirements/opencompass.txt"]}
+vlmeval          = {file = ["requirements/vlmeval.txt"]}
+rag              = {file = ["requirements/rag.txt"]}
+perf             = {file = ["requirements/perf.txt"]}
+app              = {file = ["requirements/app.txt"]}
+aigc             = {file = ["requirements/aigc.txt"]}
+sandbox          = {file = ["requirements/sandbox.txt"]}
+service          = {file = ["requirements/service.txt"]}
+dev              = {file = ["requirements/dev.txt"]}
+docs             = {file = ["requirements/docs.txt"]}
+
+ocr_bench        = {file = ["evalscope/benchmarks/ocr_bench/requirements.txt"]}
+omnidoc_bench    = {file = ["evalscope/benchmarks/omnidoc_bench/requirements.txt"]}
+ifeval           = {file = ["evalscope/benchmarks/ifeval/requirements.txt"]}
+ifbench          = {file = ["evalscope/benchmarks/ifbench/requirements.txt"]}
+multi_if         = {file = ["evalscope/benchmarks/multi_if/requirements.txt"]}
+olympiad_bench   = {file = ["evalscope/benchmarks/olympiad_bench/requirements.txt"]}
+needle_haystack  = {file = ["evalscope/benchmarks/needle_haystack/requirements.txt"]}
+openai_mrcr      = {file = ["evalscope/benchmarks/openai_mrcr/requirements.txt"]}
+general_arena    = {file = ["evalscope/benchmarks/general_arena/requirements.txt"]}
+arena_hard       = {file = ["evalscope/benchmarks/arena_hard/requirements.txt"]}
+air_bench        = {file = ["evalscope/benchmarks/air_bench/requirements.txt"]}
+refcoco          = {file = ["evalscope/benchmarks/refcoco/requirements.txt"]}
+swe_bench        = {file = ["evalscope/benchmarks/swe_bench/requirements.txt"]}
+wmt              = {file = ["evalscope/benchmarks/wmt/requirements.txt"]}
+torgo            = {file = ["evalscope/benchmarks/torgo/requirements.txt"]}
+terminal_bench   = {file = ["evalscope/benchmarks/terminal_bench/requirements.txt"]}
+bfcl             = {file = ["evalscope/benchmarks/bfcl/requirements.txt"]}
+all = {file = [
+  "requirements/opencompass.txt",
+  "requirements/vlmeval.txt",
+  "requirements/rag.txt",
+  "requirements/perf.txt",
+  "requirements/app.txt",
+  "requirements/aigc.txt",
+  "requirements/service.txt"
+]}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["*test*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-s -v"
