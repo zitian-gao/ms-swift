@@ -93,9 +93,17 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
         return model
     if loop_times < 1:
         raise ValueError(f'`loop_times` must be greater than 0, got {loop_times}.')
-    llm_model = get_llm_model(model, inner_backbone=True)
-    if not hasattr(llm_model, 'layers') or not isinstance(llm_model.layers, nn.ModuleList):
-        raise ValueError('Looped transformer currently only supports models with `model.layers` as ModuleList.')
+    # Detect Megatron Core model: lacks HuggingFace model_meta but has decoder.layers
+    _is_mcore = (not hasattr(model, 'model_meta')
+                 and hasattr(model, 'decoder')
+                 and hasattr(model.decoder, 'layers')
+                 and isinstance(model.decoder.layers, nn.ModuleList))
+    if _is_mcore:
+        llm_model = model.decoder
+    else:
+        llm_model = get_llm_model(model, inner_backbone=True)
+        if not hasattr(llm_model, 'layers') or not isinstance(llm_model.layers, nn.ModuleList):
+            raise ValueError('Looped transformer currently only supports models with `model.layers` as ModuleList.')
 
     layers = list(llm_model.layers)
     if not layers:
@@ -112,33 +120,33 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
                 # First call runs normally and may update the KV cache once.
                 output = _old_forward(*args, **kwargs)
                 for _ in range(loop_times - 1):
-                    # Strip KV-cache kwargs for loop iterations.
-                    # In modern transformers, DynamicCache.update() is called whenever
-                    # past_key_value is not None, regardless of use_cache.  Passing the
-                    # same cache object a second time doubles the KV sequence length,
-                    # causing an attention-mask size mismatch (e.g. [8,1,187,187] vs
-                    # target [8,48,187,374] when loop_times=2).
                     loop_kwargs = dict(kwargs)
-                    had_past_kv = (loop_kwargs.get('past_key_value') is not None
-                                   or loop_kwargs.get('past_key_values') is not None)
-                    loop_kwargs.pop('past_key_value', None)
-                    loop_kwargs.pop('past_key_values', None)
-                    loop_kwargs['use_cache'] = False
-                    if had_past_kv:
-                        # The pre-computed attention_mask covers the full KV context
-                        # (e.g. [B, 1, 1, 188]).  After stripping the cache the layer
-                        # sees only the 1-token input, so the mask is stale and would
-                        # cause a shape mismatch in attention (Target [B, heads, 1, 1]
-                        # vs Tensor [B, 1, 1, 188]).  Remove it; a single token
-                        # attending only to itself needs no causal mask.
-                        loop_kwargs.pop('attention_mask', None)
-                    next_args = args
-                    if isinstance(output, tuple) and output:
-                        hs = output[0]
-                        if isinstance(hs, torch.Tensor):
-                            hs = hs.contiguous()
-                        next_args = (hs,) + args[1:]
-                    output = _old_forward(*next_args, **loop_kwargs)
+                    if args:
+                        # HuggingFace: hidden_states as first positional argument.
+                        # Strip KV-cache kwargs to prevent DynamicCache length doubling.
+                        had_past_kv = (loop_kwargs.get('past_key_value') is not None
+                                       or loop_kwargs.get('past_key_values') is not None)
+                        loop_kwargs.pop('past_key_value', None)
+                        loop_kwargs.pop('past_key_values', None)
+                        loop_kwargs['use_cache'] = False
+                        if had_past_kv:
+                            loop_kwargs.pop('attention_mask', None)
+                        next_args = args
+                        if isinstance(output, tuple) and output:
+                            hs = output[0]
+                            if isinstance(hs, torch.Tensor):
+                                hs = hs.contiguous()
+                            next_args = (hs,) + args[1:]
+                        output = _old_forward(*next_args, **loop_kwargs)
+                    else:
+                        # Megatron Core: hidden_states passed as keyword argument.
+                        loop_kwargs.pop('inference_params', None)
+                        if isinstance(output, tuple) and output:
+                            hs = output[0]
+                            if isinstance(hs, torch.Tensor):
+                                hs = hs.contiguous()
+                            loop_kwargs['hidden_states'] = hs
+                        output = _old_forward(**loop_kwargs)
                 return output
 
             layer.forward = MethodType(_new_forward, layer)
@@ -148,6 +156,8 @@ def apply_loop_transformer(model: nn.Module, enable_loop: bool, loop_method: Lit
             f'Enabled looped transformer in forward: loop_method={loop_method}, loop_times={loop_times}, '
             f'origin_layers={len(layers)}, looped_layers={len(layers)}')
     elif loop_method == 'model-loop':
+        if _is_mcore:
+            raise ValueError('model-loop is not supported for Megatron Core models. Use --loop_method layer-loop.')
         if not getattr(llm_model, '_swift_model_loop_patched', False):
             old_forward = llm_model.forward
 

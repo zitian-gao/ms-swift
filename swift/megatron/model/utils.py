@@ -35,12 +35,17 @@ def _check_padding_free(args, config):
         args.padding_free = False
 
 
+_SWIFT_ONLY_ARGS = frozenset({'enable_loop', 'loop_method', 'loop_times'})
+
+
 def get_mcore_model_config(args, hf_config):
     kwargs = hf_to_mcore_config(hf_config)
     kwargs['mcore_model_type'] = args.megatron_model_meta.model_type
     kwargs['hf_config'] = hf_config
     for f in fields(ModelConfig):
         key, value = f.name, getattr(args, f.name, None)
+        if key in _SWIFT_ONLY_ARGS:
+            continue
         if value is None or isinstance(value, (list, tuple)) and len(value) == 0:
             continue
         kwargs[key] = value

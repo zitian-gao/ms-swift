@@ -28,6 +28,7 @@ from typing import Callable, Dict, List, Optional
 from swift.dataset import RowPreprocessor
 from swift.megatron.callbacks import megatron_callbacks_map
 from swift.megatron.model import get_mcore_model
+from swift.model import apply_loop_transformer
 from swift.megatron.utils import (apply_router_replay_patch, disable_forward_pre_hook, enable_forward_pre_hook,
                                   get_optimizer_param_scheduler, get_padding_to, init_persistent_async_worker,
                                   initialize_tp_communicators, load_mcore_checkpoint,
@@ -187,6 +188,9 @@ class BaseMegatronTrainer(ABC):
         self.config = self.unwrapped_models[0].config
         logger.info(f'model_config: {self.config}')
         self.bridge = self.config.bridge
+        if args.enable_loop:
+            for model in self.unwrapped_models:
+                apply_loop_transformer(model, args.enable_loop, args.loop_method, args.loop_times)
         self.peft_models = self._prepare_peft_model(self.unwrapped_models)
         self.wrapped_models = wrap_model(args, self.unwrapped_models)
 
