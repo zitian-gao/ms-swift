@@ -82,9 +82,14 @@ class DefaultDataAdapter(DataAdapter):
             Tuple[DatasetDict, Optional[DatasetDict]]: The test dataset and few-shot dataset.
         """
         if os.path.exists(self.dataset_id):
-            # Load dataset from local file system path
-            with self._temporary_attribute('dataset_hub', HubType.LOCAL):
-                return self.load_from_disk()
+            # Load dataset from local file system path.
+            # Keep the current dataset_hub (e.g. MODELSCOPE) so that
+            # MsDataset.load() is used, which natively handles absolute local
+            # paths (ModelScope snapshot directories).  Using HubType.LOCAL
+            # triggers datasets.load_dataset() which finds any dataset.py
+            # inside the snapshot and tries to validate "dataset" as a Hub
+            # repo_id, causing "Invalid repo_id: dataset" errors.
+            return self.load_from_disk()
         else:
             # Load dataset from remote source (e.g., ModelScope, Huggingface)
             return self.load_from_remote()
